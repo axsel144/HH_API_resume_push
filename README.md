@@ -1,6 +1,10 @@
-# HH_API_resume_push
+# HH_API_resumes_push
 
 This script for pushing your resumes on HH
+HH_API_resumes_push is supporting of multiply CV in one account
+Initial authorize via Chrome driver to get OAUTH token, after that no need to re get him.
+Script use a OAUTH refreshing token.
+
 
 Preparing:
 1. You need to install dependencies:
@@ -8,13 +12,15 @@ Preparing:
 2. You need to create to files:
     a. auth.json
     b. config.ini
+    
    structure of auth.json:
  >     {
  >        "email": "your_EMAIL@example.com",
  >        "password": "your_password"
  >     }
       
-    structure config.ini:
+   structure config.ini:
+    
  >   [app_auth]
  >   
  >   client_id = you need to register your app in dev.hh.ru and get this parameter
