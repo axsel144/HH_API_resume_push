@@ -9,18 +9,26 @@ Preparing:
     a. auth.json
     b. config.ini
    structure of auth.json:
-      {
-         "email": "your_EMAIL@example.com",
-         "password": "your_password"
-      }
+ >     {
+ >        "email": "your_EMAIL@example.com",
+ >        "password": "your_password"
+ >     }
       
     structure config.ini:
-    [app_auth]
-    client_id = you need to register you app in dev.hh.ru
-    client_secret = you need to register you app in dev.hh.ru
-    redirect_uri = https://oauth.pstmn.io/v1/callback
-    authorization_base_url = https://hh.ru/oauth/authorize
-    token_url = https://hh.ru/oauth/token
-    token_expire_date = script automatic writing this parameter
-    refresh_token = script automatic writing this parameter
-    token = script automatic writing this parameter
+ >   [app_auth]
+ >   
+ >   client_id = you need to register your app in dev.hh.ru and get this parameter
+ >   
+ >   client_secret = you need to register your app in dev.hh.ru and get this parameter
+ >   
+ >   redirect_uri = https://oauth.pstmn.io/v1/callback
+ >   
+ >   authorization_base_url = https://hh.ru/oauth/authorize
+ >   
+ >   token_url = https://hh.ru/oauth/token
+ >   
+ >   token_expire_date = script automatic writing this parameter
+ >   
+ >   refresh_token = script automatic writing this parameter
+ >   
+ >   token = script automatic writing this parameter
