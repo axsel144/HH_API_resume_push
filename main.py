@@ -140,6 +140,13 @@ def get_refresh_token():
         return False
 
 
+def parsed_date_convert(parsed_date):
+    date_time_obj = datetime.datetime.strptime(parsed_date, '%Y-%m-%dT%H:%M:%S+0300')
+    date_time_obj = date_time_obj + datetime.timedelta(hours=4) + datetime.timedelta(minutes=1)
+    # formated_date = str(date_time_obj)
+    return date_time_obj
+
+
 def get_uptime_resume(oauth_token, sel_resume_id):
     check_token_expire()
     global token
@@ -189,37 +196,50 @@ def check_token_expire():
         return False
 
 
-def get_resume_list(oauth_token):
+def get_oldest_resume_id(oauth_token):
     hed = {"Authorization": "Bearer %s" % oauth_token}
     response = requests.get('https://api.hh.ru/resumes/mine', headers=hed)
     if response.status_code < 300:
         test_parse = response.json()
+        updates = [a['updated_at'] for a in test_parse['items'] if 'updated_at' in a]
+        updates_conv = list(map(parsed_date_convert, updates))
         ids = [d['id'] for d in test_parse['items'] if 'id' in d]
-        names = [c['last_name'] for c in test_parse['items'] if 'last_name' in c]
+        # names = [c['last_name'] for c in test_parse['items'] if 'last_name' in c]
         count = len(ids)
-        print('Доступных резюме:',  count)
+        # print('Доступных резюме:',  count)
         list_merged = []
         for i in range(count):
+            list_merged.append(updates_conv[i])
             list_merged.append(ids[i])
-            list_merged.append(names[i])
-            print(i + 1, names[i])
+            # list_merged.append(names[i])
             i += 1
-        choose_resume = int(input('Выбери резюме:'))
-        selected_resume_id = ids[choose_resume - 1]
-        print(selected_resume_id)
-        return selected_resume_id
+        # print(list_merged)
+        for p in range(count):
+            if list_merged[p] > list_merged[p + 2]:
+                print('Планируем пинать резюме с', list_merged[p + 3], '', list_merged[p + 2])
+                return list_merged[p + 3], list_merged[p + 2]
+            if list_merged[p] < list_merged[p + 2]:
+                print('Планируем пинать резюме с', list_merged[p + 1], '', list_merged[p])
+                return list_merged[p + 1], list_merged[p]
+            else:
+                print('Ошибка!')
+                break
 
 
 if __name__ == "__main__":
     config.read("config.ini")
     token = config.get("app_auth", "token")
     refresh_token = config.get("app_auth", "refresh_token")
-    resume_id = get_resume_list(token)
+    # resume_id = get_resume_list(token)
     while True:
         config.read("config.ini")
         token = config.get("app_auth", "token")
         refresh_token = config.get("app_auth", "refresh_token")
+        # uptime = get_uptime_resume(token, resume_id)
+        resume: tuple = get_oldest_resume_id(token)
+        resume_id = resume[0]
         uptime = get_uptime_resume(token, resume_id)
+
         if uptime > 0:
             logtime = datetime.datetime.now()
             print(logtime, '[Debug] uptime more than zero', uptime)
@@ -242,6 +262,5 @@ if __name__ == "__main__":
             uptime_log = datetime.datetime.now()
             print(uptime_log, Fore.RED + '[CRITICAL Error] - что-то не так с uptime: ', uptime)
             break
-        #     print(uptime_log, 'Скорее всего просрочился токен, освежаем:')
-        #     token = get_refresh_token(token)
-
+            # print(uptime_log, 'Скорее всего просрочился токен, освежаем:')
+            # token = get_refresh_token(token)
