@@ -1,17 +1,18 @@
-from oauthlib.oauth2 import WebApplicationClient
-import requests
-import time
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
-from selenium import webdriver
-from configparser import ConfigParser
 import datetime
 import json
-from urllib.parse import urlparse, parse_qs
 import math
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+import time
+from configparser import ConfigParser
+from urllib.parse import urlparse, parse_qs
+import requests
 from colorama import Fore, init
+from oauthlib.oauth2 import WebApplicationClient
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+
 init(autoreset=True)
 
 with open("auth.json", "r") as f:
@@ -31,28 +32,18 @@ token_life = str(datetime.datetime.now())
 RESUME_URL = "https://api.hh.ru/resumes/"
 
 
-def init_get_token():
+def start_browser():
     client = WebApplicationClient(client_id)
-    auth_token = start_browser(client)
-    return auth_token
-
-
-def gen_auth_url(client):
-    authorization_url = client.prepare_request_uri(authorization_base_url, redirect_uri=redirect_uri)
-    generation_url_time = datetime.datetime.now()
-    print(generation_url_time, 'URL для авторизации сформировано:' + authorization_url)
-    return authorization_url
-
-
-def start_browser(client):
     options = webdriver.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--headless=new")
-    # Отправляем пользователя по URL для авторизации
     open_chrome_time: datetime = datetime.datetime.now()
     print(open_chrome_time, Fore.BLUE + 'Открываем браузер')
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.get(url=str(gen_auth_url(client)))
+    authorization_url = str(client.prepare_request_uri(authorization_base_url, redirect_uri=redirect_uri))
+    generation_url_time = datetime.datetime.now()
+    print(generation_url_time, 'URL для авторизации сформировано:' + authorization_url)
+    driver.get(url=authorization_url)
     try:
         driver.find_element(
             by=By.XPATH, value="//input[@data-qa='login-input-username']").send_keys(LOGIN)
@@ -60,7 +51,6 @@ def start_browser(client):
             by=By.XPATH, value="//input[@data-qa='login-input-password']").send_keys(PASSWORD)
         driver.find_element(
             by=By.XPATH, value="//button[@data-qa='account-login-submit']").click()
-        # time.sleep(15)
         auth_end_time = datetime.datetime.now()
         print(auth_end_time, Fore.BLUE + "Успешная авторизация")
         time.sleep(5)
@@ -78,7 +68,6 @@ def start_browser(client):
 
 
 def convert_auth_to_token(authcode):
-    set_token_expire()
     data = {
         'grant_type': 'authorization_code',
         'code': authcode,
@@ -88,6 +77,13 @@ def convert_auth_to_token(authcode):
     }
     hed = {"Content-Type": "application/x-www-form-urlencoded"}
     response2 = requests.post('https://hh.ru/oauth/token', params=data, headers=hed)
+    print('Debug - convert_auth_to_token status_code: ', response2.status_code)
+    print('Debug - check text: ', response2.text)
+    token_conv_raw = response2.json()
+    token_new = token_conv_raw["access_token"]
+    refresh_token_new = token_conv_raw["refresh_token"]
+    write_to_conf("app_auth", "token", token_new)
+    write_to_conf("app_auth", "refresh_token", refresh_token_new)
     return response2
 
 
@@ -95,166 +91,170 @@ def resume_publish(sel_resume_id):
     publish_url = RESUME_URL + sel_resume_id + '/publish'
     check_token_expire()
     hed = {"Authorization": "Bearer %s" % token}
-    response = requests.post(publish_url, headers=hed)
-    if response.status_code < 300:
-        response_time = datetime.datetime.now()
-        print(response_time, Fore.GREEN + 'Резюме было обновлено')
-        return response
-    elif response.status_code >= 300:
-        error_time = datetime.datetime.now()
-        print(error_time, Fore.RED + 'Ошибка при обновлении резюме!')
-        print(Fore.RED, '[Debug] Status Code: ', response.status_code)
-        print(Fore.RED, '[Debug] Response text: ', response.text)
+    print('[Debug] - resume_publish status code:', requests.post(publish_url, headers=hed).status_code)
 
 
 def get_refresh_token():
-    global token
-    global refresh_token
+    config.read("config.ini")
+    refresh_token_old = config.get("app_auth", "refresh_token")
     data = {
         'grant_type': 'refresh_token',
-        'refresh_token': refresh_token,
+        'refresh_token': refresh_token_old,
     }
     hed = {"Content-Type": "application/x-www-form-urlencoded"}
-    response3 = requests.post('https://hh.ru/oauth/token', params=data, headers=hed).json()
-    print(response3)
+    response3 = requests.post('https://hh.ru/oauth/token', params=data, headers=hed)
+    status = response3.ok
+    text = response3.text
+    response3 = response3.json()
+    print('[Debug] - get_refresh_token status-code 1:', status)
+    print('[Debug] Response text: ', response3)
     if 'error' not in response3.keys():
-        token = response3["access_token"]
-        refresh_token = response3["refresh_token"]
+        token_new = response3["access_token"]
+        refresh_token_new = response3["refresh_token"]
         response_time = datetime.datetime.now()
         set_token_expire()
-        print(response_time, 'Токен был обновлен')
+        write_to_conf("app_auth", "token", token_new)
+        write_to_conf("app_auth", "refresh_token", refresh_token_new)
+        print(response_time, Fore.GREEN + '[INFO] Токен был обновлен')
         return True
-    if 'error' in response3.keys():
+    if status == 0:
         error_time = datetime.datetime.now()
-        print(error_time, Fore.RED + 'Ошибка при обновлении токена! Пытаемся пройти процесс авторизации')
-        auth_code: str = init_get_token()
+        print(error_time, Fore.RED + '[ERROR] Ошибка при обновлении токена! Пытаемся пройти процесс авторизации')
+        print(Fore.RED, '[Debug] - get_refresh_token status-code 2: ', status)
+        print(Fore.RED, '[Debug] Response text: ', response3)
+        auth_code: str = start_browser()
         token_str = convert_auth_to_token(auth_code).json()
-        new_token = token_str["access_token"]
+        token_new = token_str["access_token"]
         token_convert_time = datetime.datetime.now()
-        print(token_convert_time, 'Первичный токен получен: ', Fore.GREEN + token)
-        new_refresh_token = token_str["refresh_token"]
-        config["app_auth"]["token"] = new_token
-        config["app_auth"]["refresh_token"] = new_refresh_token
-        with open('config.ini', 'w') as conf:  # save
-            config.write(conf)
-        return False
+        print(token_convert_time, '[INFO] Первичный токен получен: ', Fore.GREEN + token)
+        refresh_token_new = token_str["refresh_token"]
+        write_to_conf("app_auth", "token", token_new)
+        write_to_conf("app_auth", "refresh_token", refresh_token_new)
+    if 'token not expired' in text:
+        print('Токен еще живой')
+        set_token_expire()
+        return True
+
+
+def write_to_conf(group, key, value):
+    config[str(group)][str(key)] = str(value)
+    with open('config.ini', 'w') as conf:
+        config.write(conf)
 
 
 def parsed_date_convert(parsed_date):
     date_time_obj = datetime.datetime.strptime(parsed_date, '%Y-%m-%dT%H:%M:%S+0300')
     date_time_obj = date_time_obj + datetime.timedelta(hours=4) + datetime.timedelta(minutes=1)
-    # formated_date = str(date_time_obj)
     return date_time_obj
 
 
-def get_uptime_resume(oauth_token, sel_resume_id):
+def get_uptime_resume(sel_resume_id):
     check_token_expire()
-    global token
+    config.read("config.ini")
+    oauth_token = config.get("app_auth", "token")
     hed = {"Authorization": "Bearer %s" % oauth_token}
     response = requests.get('https://api.hh.ru/resumes/' + sel_resume_id, headers=hed)
     if response.status_code < 300:
         parsed_response = response.json()
-        uptime_parsed = parsed_response["updated_at"]
-        date_time_obj = datetime.datetime.strptime(uptime_parsed, '%Y-%m-%dT%H:%M:%S+0300')
-        date_time_obj = date_time_obj + datetime.timedelta(hours=4) + datetime.timedelta(minutes=1)
-        log_time = datetime.datetime.now()
-        print(log_time, 'Следующая попытка: ', date_time_obj)
+        resume_uptime = parsed_date_convert(parsed_response["updated_at"])
         now_date = datetime.datetime.now()
-        delta = date_time_obj - now_date
+        delta = resume_uptime - now_date
         delta_delayed: float = delta.total_seconds()
         return delta_delayed
-    if response.status_code >= 300:
-        log_time = datetime.datetime.now()
-        print(log_time, Fore.BLUE + 'Предполагаю, что токен просрочился. Пробуем его освежить')
-        token = get_refresh_token()
-        return False
+    elif response.status_code > 300:
+        err_time = datetime.datetime.now()
+        print(err_time, '[ERROR] Something wrong with getting resume uptime!')
+        print('[Debug] - get_uptime_resume Status code:', response.status_code)
+        print('[Debug] Resolve:', response.text)
+        return 1
 
 
 def set_token_expire():
-    token_expire_date = datetime.datetime.now() + datetime.timedelta(days=14) + datetime.timedelta(minutes=20)
-    config["app_auth"]["token_expire_date"] = str(token_expire_date)
-    with open('config.ini', 'w') as conf:  # save
-        config.write(conf)
-# return token_expire_date
-    return True
+    loger_time = datetime.datetime.now()
+    token_expire_date = str(datetime.datetime.now() + datetime.timedelta(days=14) + datetime.timedelta(minutes=20))
+    write_to_conf("app_auth", "token_expire_date", token_expire_date)
+    print(loger_time, 'Дата окончания токена была успешно записана')
 
 
 def check_token_expire():
-    global token, refresh_token
     config.read("config.ini")
-    token = config.get("app_auth", "token")
-    refresh_token = config.get("app_auth", "refresh_token")
-    current_datetime = datetime.datetime.now()
-    token_expire_raw = config.get("app_auth", "token_expire_date")
-    token_expire_date = datetime.datetime.strptime(token_expire_raw, '%Y-%m-%d %H:%M:%S.%f')
-    if token_expire_date > current_datetime:
-        print(current_datetime, Fore.GREEN + 'Токен живой и будет жить до :', token_expire_date)
-        return True
-    else:
-        print(current_datetime, Fore.RED + 'Токен просрочился, пытаемся его освежить ')
-        get_refresh_token()
-        return False
-
-
-def get_oldest_resume_id(oauth_token):
-    hed = {"Authorization": "Bearer %s" % oauth_token}
+    token_chk = config.get("app_auth", "token")
+    hed = {"Authorization": "Bearer %s" % token_chk}
     response = requests.get('https://api.hh.ru/resumes/mine', headers=hed)
-    if response.status_code < 300:
-        test_parse = response.json()
-        updates = [a['updated_at'] for a in test_parse['items'] if 'updated_at' in a]
-        updates_conv = list(map(parsed_date_convert, updates))
-        ids = [d['id'] for d in test_parse['items'] if 'id' in d]
-        # names = [c['last_name'] for c in test_parse['items'] if 'last_name' in c]
-        count = len(ids)
-        # print('Доступных резюме:',  count)
-        list_merged = []
-        for i in range(count):
-            list_merged.append(updates_conv[i])
-            list_merged.append(ids[i])
-            # list_merged.append(names[i])
-            i += 1
-        # print(list_merged)
-        for p in range(count):
-            if list_merged[p] > list_merged[p + 2]:
-                print('Планируем пинать резюме с', list_merged[p + 3], '', list_merged[p + 2])
-                return list_merged[p + 3], list_merged[p + 2]
-            if list_merged[p] < list_merged[p + 2]:
-                print('Планируем пинать резюме с', list_merged[p + 1], '', list_merged[p])
-                return list_merged[p + 1], list_merged[p]
-            else:
-                print('Ошибка!')
-                break
+    status_chk = response.status_code
+    current_datetime = datetime.datetime.now()
+    if status_chk < 300:
+        token_expire_raw = config.get("app_auth", "token_expire_date")
+        token_expire_date = datetime.datetime.strptime(token_expire_raw, '%Y-%m-%d %H:%M:%S.%f')
+        # if token_expire_date > current_datetime:
+        #     print(current_datetime, '[INFO] Токен живой и будет жить до :', Fore.YELLOW + str(token_expire_date))
+    if status_chk == 403:
+        print('[Debug] - check_token_expire status 1: ', status_chk)
+        print('Debug - check text: ', response.text)
+        print(current_datetime, Fore.BLUE + '[INFO] Токен просрочился, пытаемся его освежить через API ')
+        get_refresh_token()
+
+    # if status_chk > 400:
+    #     token_update_time = datetime.datetime.now()
+    #     print('[Debug] - check_token_expire status 2', status_chk)
+    #     print('Debug - check text: ', response.text)
+    #     print(token_update_time, Fore.RED + '[WARN] - Все же токен сильно просрочился, освежаем его через Chrome')
+    #     token_str = convert_auth_to_token(start_browser()).json()
+    #     token_chk = token_str["access_token"]
+    #     write_to_conf("app_auth", "token", token_chk)
+
+
+def get_oldest_resume_id():
+    check_token_expire()
+    config.read("config.ini")
+    o_token = config.get("app_auth", "token")
+    hed = {"Authorization": "Bearer %s" % o_token}
+    response = requests.get('https://api.hh.ru/resumes/mine', headers=hed)
+    test_parse = response.json()
+    updates = [a['updated_at'] for a in test_parse['items'] if 'updated_at' in a]
+    updates_conv = list(map(parsed_date_convert, updates))
+    ids = [d['id'] for d in test_parse['items'] if 'id' in d]
+    count = len(ids)
+    list_merged = []
+    for i in range(count):
+        list_merged.append(updates_conv[i])
+        list_merged.append(ids[i])
+        i += 1
+    for p in range(count):
+        current_datetime = datetime.datetime.now()
+        if list_merged[p] > list_merged[p + 2]:
+            print(current_datetime, '[INFO] Планируем пинать резюме с id ' + Fore.GREEN + str(list_merged[p + 3]), 'в'
+                                        , Fore.CYAN + str(list_merged[p + 2]))
+            return list_merged[p + 3], list_merged[p + 2]
+        if list_merged[p] < list_merged[p + 2]:
+            print(current_datetime, '[INFO] Планируем пинать резюме с id'
+                                        , Fore.GREEN + str(list_merged[p + 1]), 'в', Fore.CYAN + str(list_merged[p]))
+            return list_merged[p + 1], list_merged[p]
+        else:
+            print(current_datetime, Fore.RED + '[ERROR] Ошибка! Проблема в оперделении старшего резюме')
+            break
 
 
 if __name__ == "__main__":
-    config.read("config.ini")
-    token = config.get("app_auth", "token")
-    refresh_token = config.get("app_auth", "refresh_token")
-    # resume_id = get_resume_list(token)
     while True:
         config.read("config.ini")
         token = config.get("app_auth", "token")
         refresh_token = config.get("app_auth", "refresh_token")
-        # uptime = get_uptime_resume(token, resume_id)
-        resume: tuple = get_oldest_resume_id(token)
+        resume = list(get_oldest_resume_id())
         resume_id = resume[0]
-        uptime = get_uptime_resume(token, resume_id)
-
+        uptime = get_uptime_resume(resume_id)
         if uptime > 0:
             logtime = datetime.datetime.now()
-            print(logtime, '[Debug] uptime more than zero', uptime)
             uptime_log = datetime.datetime.now()
             uptime_minutes = (int(uptime) / 60) + 5
             uptime_minutes = math.ceil(uptime_minutes)
-            print(uptime_log, 'Резюме свежее, обновление через ', Fore.GREEN + str(uptime_minutes),  ' минут')
+            print(uptime_log, '[INFO] Резюме свежее, обновление через ', Fore.GREEN + str(uptime_minutes),  ' минут')
             time.sleep(int(uptime))
             continue
-
-        if uptime <= 0:
+        elif uptime <= 0:
             logtime = datetime.datetime.now()
-            print(logtime, '[Debug] uptime less than zero: ', uptime)
             uptime_log = datetime.datetime.now()
-            print(uptime_log, Fore.GREEN + 'Настало время пнуть резюме')
+            print(uptime_log, '[INFO] Настало время пнуть резюме')
             resume_publish(resume_id)
             uptime = 1
             continue
@@ -262,5 +262,3 @@ if __name__ == "__main__":
             uptime_log = datetime.datetime.now()
             print(uptime_log, Fore.RED + '[CRITICAL Error] - что-то не так с uptime: ', uptime)
             break
-            # print(uptime_log, 'Скорее всего просрочился токен, освежаем:')
-            # token = get_refresh_token(token)
